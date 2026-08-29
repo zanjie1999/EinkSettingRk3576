@@ -41,6 +41,9 @@ android {
 
 dependencies {
 
+    // Pure-Java ADB protocol client. It lets the app talk to the device's
+    // already-running TCP adbd without shipping a second native executable.
+    implementation("com.tananaev:adblib:1.3")
     implementation(libs.androidx.core.ktx)
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.activity.compose)

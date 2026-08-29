@@ -2,6 +2,8 @@ package com.zyyme.einkrk
 
 import android.content.Context
 import android.util.Log
+import java.util.concurrent.ExecutorService
+import java.util.concurrent.Executors
 
 data class EinkSettings(val mode: Int, val gamma: Float, val gray256: Boolean)
 
@@ -11,6 +13,9 @@ object SettingsRepository {
     private const val MODE = "mode"
     private const val GAMMA = "gamma"
     private const val GRAY256 = "gray256"
+    private val applyExecutor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
+        Thread(runnable, "EinkRk-setprop").apply { isDaemon = true }
+    }
 
     fun read(context: Context): EinkSettings {
         val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -27,33 +32,26 @@ object SettingsRepository {
             .putFloat(GAMMA, gamma.coerceIn(0.5f, 1.5f))
             .putBoolean(GRAY256, gray256)
             .apply()
-        apply(EinkSettings(mode, gamma, gray256))
+        apply(context)
     }
 
-    fun apply(context: Context) = apply(read(context))
-
-    fun apply(settings: EinkSettings) {
-        runSetProp("sys.ebook.mode", settings.mode.toString())
-        runSetProp("debug.sf.gamma.gamma", settings.gamma.toString())
-        runSetProp("persist.ebook.gray256_enable", if (settings.gray256) "1" else "0")
+    fun apply(context: Context) {
+        val appContext = context.applicationContext
+        applyExecutor.execute { apply(read(appContext), appContext) }
     }
 
-    private fun runSetProp(key: String, value: String) {
-        val command = "setprop $key $value"
-        try {
-            // adb root only affects the adb shell. An app must explicitly enter the
-            // root domain through the su binary installed by the device's root manager.
-            val process = Runtime.getRuntime().exec(arrayOf("su", "-c", command))
-            val exitCode = process.waitFor()
-            val stdout = process.inputStream.bufferedReader().use { it.readText() }.trim()
-            val stderr = process.errorStream.bufferedReader().use { it.readText() }.trim()
-            if (exitCode == 0) {
-                Log.i(TAG, "$command via su succeeded${if (stdout.isNotEmpty()) "; stdout=$stdout" else ""}")
-            } else {
-                Log.e(TAG, "$command via su failed; exitCode=$exitCode${if (stderr.isNotEmpty()) "; stderr=$stderr" else ""}")
-            }
-        } catch (e: Exception) {
-            Log.e(TAG, "$command via su could not be executed: ${e.javaClass.simpleName}: ${e.message}", e)
+    private fun apply(settings: EinkSettings, context: Context) {
+        runSetProp(context, "sys.ebook.mode", settings.mode.toString())
+        runSetProp(context, "debug.sf.gamma.gamma", settings.gamma.toString())
+        runSetProp(context, "persist.ebook.gray256_enable", if (settings.gray256) "1" else "0")
+    }
+
+    private fun runSetProp(context: Context, key: String, value: String) {
+        val result = AdbRootClient.setProp(context, key, value)
+        if (result.isSuccess) {
+            Log.i(TAG, "setprop $key succeeded${result.output.trim().let { if (it.isEmpty()) "" else "; output=$it" }}")
+        } else {
+            Log.e(TAG, "setprop $key failed: ${result.error}")
         }
     }
 }
